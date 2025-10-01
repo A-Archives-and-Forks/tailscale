@@ -28,7 +28,6 @@ import (
 	"tailscale.com/types/key"
 	"tailscale.com/types/logger"
 	"tailscale.com/util/mak"
-	"tailscale.com/util/multierr"
 	"tailscale.com/util/singleflight"
 )
 
@@ -182,29 +181,6 @@ func NewNoiseClient(opts NoiseOpts) (*NoiseClient, error) {
 	return np, nil
 }
 
-// GetSingleUseRoundTripper returns a RoundTripper that can be only be used once
-// (and must be used once) to make a single HTTP request over the noise channel
-// to the coordination server.
-//
-// In addition to the RoundTripper, it returns the HTTP/2 channel's early noise
-// payload, if any.
-func (nc *NoiseClient) GetSingleUseRoundTripper(ctx context.Context) (http.RoundTripper, *tailcfg.EarlyNoise, error) {
-	for tries := 0; tries < 3; tries++ {
-		conn, err := nc.getConn(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		ok, earlyPayloadMaybeNil, err := conn.ReserveNewRequest(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		if ok {
-			return conn, earlyPayloadMaybeNil, nil
-		}
-	}
-	return nil, nil, errors.New("[unexpected] failed to reserve a request on a connection")
-}
-
 // contextErr is an error that wraps another error and is used to indicate that
 // the error was because a context expired.
 type contextErr struct {
@@ -295,13 +271,13 @@ func (nc *NoiseClient) Close() error {
 	nc.connPool = nil
 	nc.mu.Unlock()
 
-	var errors []error
+	var errs []error
 	for _, c := range conns {
 		if err := c.Close(); err != nil {
-			errors = append(errors, err)
+			errs = append(errs, err)
 		}
 	}
-	return multierr.New(errors...)
+	return errors.Join(errs...)
 }
 
 // dial opens a new connection to tailcontrol, fetching the server noise key
